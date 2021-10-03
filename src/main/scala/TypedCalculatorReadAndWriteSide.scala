@@ -9,6 +9,7 @@ import akka.stream.scaladsl.{Sink, Source}
 import akka.{NotUsed, actor}
 import akka_typed.CalculatorRepository.{getLatestOffsetAndResult, initDataBase}
 import akka_typed.TypedCalculatorWriteSide.{Added, Command, Divided, Multiplied}
+import com.typesafe.config.{Config, ConfigFactory}
 
 import scala.concurrent.ExecutionContextExecutor
 
@@ -37,7 +38,7 @@ object akka_typed {
     }
 
     object State {
-      val empty = State(0)
+      val empty: State = State(0)
     }
 
     def apply(): Behavior[Command] =
@@ -107,13 +108,14 @@ object akka_typed {
 
     case class CalculationResult(offset: Long, result: Double)
 
-    initDataBase
+    initDataBase()
 
     implicit val mat: actor.ActorSystem  = system.classicSystem
     val (offset, latestCalculatedResult) = getLatestOffsetAndResult
     val startOffset: Int                 = if (offset == 1) 1 else offset + 1
 
-//    val readJournal: LeveldbReadJournal =
+    // val readJournal: LeveldbReadJournal =
+    //   PersistenceQuery(system).readJournalFor[LeveldbReadJournal](LeveldbReadJournal.Identifier)
     val readJournal: CassandraReadJournal =
       PersistenceQuery(system).readJournalFor[CassandraReadJournal](CassandraReadJournal.Identifier)
 
@@ -155,22 +157,25 @@ object akka_typed {
   object CalculatorRepository {
     import scalikejdbc._
 
-    def initDataBase: Unit = {
+    def initDataBase(): Unit = {
       Class.forName("org.postgresql.Driver")
       val poolSettings = ConnectionPoolSettings(initialSize = 10, maxSize = 100)
 
+      val cfg: Config = ConfigFactory.load().getConfig("slick-postgres.db.properties")
+
       ConnectionPool.singleton(
-        "jdbc:postgresql://localhost:5432/demo",
-        "docker",
-        "docker",
+        url = cfg.getString("url"),
+        user = cfg.getString("user"),
+        password = cfg.getString("password"),
         poolSettings
       )
+
     }
 
     def getLatestOffsetAndResult: (Int, Double) = {
       val entities =
         DB readOnly { session =>
-          session.list("select * from public.result where id = 1;") { row =>
+          session.list("select * from public.result where id = 1") { row =>
             (row.int("write_side_offset"), row.double("calculated_value"))
           }
         }
@@ -224,7 +229,7 @@ object akka_typed {
 
     TypedCalculatorReadSide(system)
 
-    implicit val executionContext = system.executionContext
+    implicit val executionContext: ExecutionContextExecutor = system.executionContext
   }
 
 }
